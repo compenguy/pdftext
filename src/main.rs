@@ -57,7 +57,8 @@ pub fn extract_pdf_bytes(pdf_bytes: &[u8]) -> Result<String> {
 }
 
 quick_main!(|| -> Result<()> {
-    let path = args().next().expect("Usage: pdftext <filename>");
+    let path = args().nth(1).expect("Usage: pdftext <filename>");
+    println!("Extracting text from file at {}", path);
     let file = File::<Vec<u8>>::open(&path)?;
     println!("{}", extract_pdf(&file)?);
     Ok(())
