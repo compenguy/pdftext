@@ -1,27 +1,12 @@
-#[macro_use]
-extern crate error_chain;
-
 extern crate pdf;
 
 use std::env::args;
 use pdf::file::File;
 use pdf::backend::Backend;
 use pdf::primitive::Primitive;
+use pdf::error::PdfError;
 
-error_chain! {
-    foreign_links {
-        Pdf(::pdf::Error);
-        Utf8(::std::string::FromUtf8Error);
-    }
-    errors {
-        AnError(t: String) {
-            description("An error occurred.")
-            display("An error occurred: {}", t)
-        }
-    }
-}
-
-pub fn pdf_primitive_to_string(primitive: &Primitive) -> Result<String> {
+pub fn pdf_primitive_to_string(primitive: &Primitive) -> Result<String, PdfError> {
     let pdftext = match *primitive {
         Primitive::String(ref pdfstring) => pdfstring.clone().into_string()?,
         _                                 => String::new(),
@@ -29,11 +14,11 @@ pub fn pdf_primitive_to_string(primitive: &Primitive) -> Result<String> {
     Ok(pdftext)
 }
 
-pub fn extract_pdf<B: Backend>(pdf: &File<B>) -> Result<String> {
+pub fn extract_pdf<B: Backend>(pdf: &File<B>) -> Result<String, PdfError> {
     let mut doc_text = String::new();
-    println!("\nDocument has {} pages.", pdf.get_num_pages()?);
+    println!("\nDocument has {} pages.", pdf.num_pages()?);
     for page in pdf.pages() {
-        for content in page.contents.iter().as_ref() {
+        for content in page?.contents.iter() {
             for operation in content.operations.iter().as_ref() {
                 println!("Adding doc text...");
                 match operation.operator.as_ref() {
@@ -51,18 +36,18 @@ pub fn extract_pdf<B: Backend>(pdf: &File<B>) -> Result<String> {
     Ok(doc_text)
 }
 
-pub fn extract_pdf_bytes(pdf_bytes: &[u8]) -> Result<String> {
-    let file = File::new(pdf_bytes.to_vec());
+pub fn extract_pdf_bytes(pdf_bytes: &[u8]) -> Result<String, PdfError> {
+    let file = File::from_data(pdf_bytes.to_vec())?;
     extract_pdf(&file)
 }
 
-quick_main!(|| -> Result<()> {
+fn main() -> Result<(), PdfError> {
     let path = args().nth(1).expect("Usage: pdftext <filename>");
     println!("Extracting text from file at {}", path);
     let file = File::<Vec<u8>>::open(&path)?;
     println!("{}", extract_pdf(&file)?);
     Ok(())
-});
+}
 
 #[cfg(test)]
 mod tests {
@@ -105,7 +90,7 @@ endobj
 endobj
 
 4 0 obj
-  << /Length 55 >>
+  << /Length 54 >>
 stream
   BT
     /F1 18 Tf
