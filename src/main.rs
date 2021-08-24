@@ -1,51 +1,82 @@
-extern crate pdf;
-
 use std::env::args;
-use pdf::file::File;
-use pdf::backend::Backend;
-use pdf::primitive::Primitive;
-use pdf::error::PdfError;
 
-pub fn pdf_primitive_to_string(primitive: &Primitive) -> Result<String, PdfError> {
-    let pdftext = match *primitive {
-        Primitive::String(ref pdfstring) => pdfstring.clone().into_string()?,
-        _                                 => String::new(),
-    };
-    Ok(pdftext)
-}
+use anyhow::{Context, Result};
 
-pub fn extract_pdf<B: Backend>(pdf: &File<B>) -> Result<String, PdfError> {
+use pdf::content::{Op, TextDrawAdjusted};
+use pdf::object::Resolve;
+use pdf::{backend::Backend, file::File};
+
+use crate::text::FontCache;
+
+mod text;
+
+pub fn extract_pdf<B: Backend>(pdf: &File<B>) -> Result<String> {
     let mut doc_text = String::new();
-    println!("\nDocument has {} pages.", pdf.num_pages()?);
+    println!("\nDocument has {} pages.", pdf.num_pages());
     for page in pdf.pages() {
-        for content in page?.contents.iter() {
-            for operation in content.operations.iter().as_ref() {
-                println!("Adding doc text...");
-                match operation.operator.as_ref() {
-                    "Tj" | "TJ" | "\"" | "'" => {
-                        for primitive in &operation.operands {
-                            let pdftext = pdf_primitive_to_string(primitive)?;
-                            doc_text += &pdftext;
+        let page = page.with_context(|| "Failed to extract page from pdf")?;
+        let mut fc: FontCache = FontCache::new();
+        for (name, font) in page.resources.iter().flat_map(|r| &r.fonts) {
+            fc.add_font(name, pdf.get(*font).with_context(|| "Failed to extract font data from pdf")?);
+        }
+        for gs in page
+            .resources
+            .iter()
+            .flat_map(|r| r.graphics_states.values())
+        {
+            if let Some((font, _)) = gs.font {
+                let font = pdf.get(font).with_context(|| "Failed to extract font data from pdf's current graphics state")?;
+                fc.add_font(font.name.clone(), font);
+            }
+        }
+
+        for op in page.contents.iter().flat_map(|c| &c.operations) {
+            match op {
+                Op::GraphicsState { name } => {
+                    if let Some(ref res) = page.resources {
+                        if let Some((font, _)) =
+                            res.graphics_states.get(name).and_then(|gs| gs.font)
+                        {
+                            let font = pdf.get(font).with_context(|| "Failed to look up cached font information for graphics state's current font")?;
+                            fc.select_font(Some(font.name.clone()));
                         }
                     }
-                    other                    => println!("Unhandled operator: {}", other),
                 }
+                Op::TextFont { name, .. } => fc.select_font(Some(name.to_string())),
+                Op::TextDraw { text } => {
+                    if let Some(text) = fc.decode(&text.data) {
+                        doc_text.push_str(&text);
+                    }
+                }
+                Op::TextDrawAdjusted { array } => {
+                    for data in array {
+                        if let TextDrawAdjusted::Text(text) = data {
+                            if let Some(text) = fc.decode(&text.data) {
+                                doc_text.push_str(&text);
+                            }
+                        }
+                    }
+                }
+                Op::TextNewline => {
+                    doc_text.push('\n');
+                }
+                _ => {}
             }
         }
     }
     Ok(doc_text)
 }
 
-pub fn extract_pdf_bytes(pdf_bytes: &[u8]) -> Result<String, PdfError> {
-    let file = File::from_data(pdf_bytes.to_vec())?;
+pub fn extract_pdf_bytes(pdf_bytes: &[u8]) -> Result<String> {
+    let file = File::from_data(pdf_bytes.to_vec()).with_context(|| "Failed while parsing pdf content")?;
     extract_pdf(&file)
 }
 
-fn main() -> Result<(), PdfError> {
+fn main() -> Result<()> {
     let path = args().nth(1).expect("Usage: pdftext <filename>");
     println!("Extracting text from file at {}", path);
-    let file = File::<Vec<u8>>::open(&path)?;
-    println!("{}", extract_pdf(&file)?);
+    let file = File::<Vec<u8>>::open(&path).with_context(|| "Failed while parsing pdf content")?;
+    println!("{}", extract_pdf(&file).with_context(|| "Failed while extracting pdf text content")?);
     Ok(())
 }
 
@@ -114,6 +145,7 @@ trailer
 startxref
 565
 %%EOF";
-        assert_eq!(extract_pdf_bytes(text).unwrap().trim(), "Hello World");
+        let out = extract_pdf_bytes(text).expect("Failed to extract pdf text from supplied byte data");
+        assert_eq!(out, "Hello World");
     }
 }

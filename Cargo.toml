@@ -2,6 +2,9 @@
 name = "pdftext"
 version = "0.1.1"
 authors = ["Will Page <compenguy@gmail.com>"]
+edition = "2018"
 
 [dependencies]
-pdf = { git = "https://github.com/pdf-rs/pdf/" }
+anyhow = "1.0"
+pdf = { git = "https://github.com/pdf-rs/pdf", version = "0.7.2" }
+
